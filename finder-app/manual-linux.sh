@@ -12,6 +12,7 @@ BUSYBOX_VERSION=1_33_1
 FINDER_APP_DIR=$(realpath $(dirname $0))
 ARCH=arm64
 CROSS_COMPILE=aarch64-none-linux-gnu-
+TOOLCHAIN_BIN=/home/shaswath/work/arm-cross-compiler/gcc-arm-10.2-2020.11-x86_64-aarch64-none-linux-gnu/aarch64-none-linux-gnu/libc
 
 if [ $# -lt 1 ]
 then
@@ -96,6 +97,12 @@ fi
 
 echo "Adding the Image in outdir"
 cp ${OUTDIR}/linux-stable/arch/${ARCH}/boot/Image ${OUTDIR}
+if [ $? -eq 0 ]; then
+    echo "Add ${OUTDIR}/linux-stable/arch/${ARCH}/boot/Image to ${OUTDIR} success!"
+else
+    echo "failed: To copy image to ${OUTDIR}"
+    exit 1
+fi
 
 echo "Creating the staging directory for the root filesystem"
 cd "$OUTDIR"
@@ -150,8 +157,21 @@ ${CROSS_COMPILE}readelf -a ${OUTDIR}/rootfs/bin/busybox | grep "program interpre
 ${CROSS_COMPILE}readelf -a ${OUTDIR}/rootfs/bin/busybox | grep "Shared library"
 
 # TODO: Add library dependencies to rootfs
-cp $CC_TOOLCHAIN_SYS/libc/lib/* ${OUTDIR}/rootfs/lib/
-cp $CC_TOOLCHAIN_SYS/libc/lib64/* ${OUTDIR}/rootfs/lib64/
+cp $TOOLCHAIN_BIN/lib/* ${OUTDIR}/rootfs/lib/
+if [ $? -eq 0 ]; then
+    echo "Add library dependencies to rootfs success!"
+else
+    echo "failed: To Add library dependencies to rootfs ${OUTDIR}/rootfs/lib/"
+    exit 1
+fi
+
+cp $TOOLCHAIN_BIN/lib64/* ${OUTDIR}/rootfs/lib64/
+if [ $? -eq 0 ]; then
+    echo "Add library dependencies to rootfs success!"
+else
+    echo "failed: To Add library dependencies to rootfs ${OUTDIR}/rootfs/lib/"
+    exit 1
+fi
 
 # TODO: Make device nodes
 sudo mknod ${OUTDIR}/rootfs/dev/null c 1 3
@@ -159,7 +179,6 @@ sudo mknod ${OUTDIR}/rootfs/dev/console c 5 1
 
 # TODO: Clean and build the writer utility
 cd ~/work/assignment-1-shaswathts/finder-app/
-pwd
 make clean
 make CROSS_COMPILE=${CROSS_COMPILE}
 
