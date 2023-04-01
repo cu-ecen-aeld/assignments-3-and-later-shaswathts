@@ -12,7 +12,7 @@ BUSYBOX_VERSION=1_33_1
 FINDER_APP_DIR=$(realpath $(dirname $0))
 ARCH=arm64
 CROSS_COMPILE=aarch64-none-linux-gnu-
-TOOLCHAIN_BIN=/home/shaswath/work/arm-cross-compiler/gcc-arm-10.2-2020.11-x86_64-aarch64-none-linux-gnu/aarch64-none-linux-gnu/libc
+TOOLCHAIN_BIN=$HOME/work/arm-cross-compiler/gcc-arm-10.2-2020.11-x86_64-aarch64-none-linux-gnu/aarch64-none-linux-gnu/libc
 
 if [ $# -lt 1 ]
 then
@@ -157,20 +157,24 @@ ${CROSS_COMPILE}readelf -a ${OUTDIR}/rootfs/bin/busybox | grep "program interpre
 ${CROSS_COMPILE}readelf -a ${OUTDIR}/rootfs/bin/busybox | grep "Shared library"
 
 # TODO: Add library dependencies to rootfs
-cp $TOOLCHAIN_BIN/lib/* ${OUTDIR}/rootfs/lib/
-if [ $? -eq 0 ]; then
-    echo "Add library dependencies to rootfs success!"
+echo "Adding program interpreter from ${TOOLCHAIN_BIN}/lib/ld-linux-aarch64.so.1"
+if [ -z "$(ls -A ${TOOLCHAIN_BIN}/lib/)" ]; then
+   echo "Dir is empty"
+   echo "failed: To Add program intrepreter to ${OUTDIR}/rootfs/lib/"
+   exit 1;
 else
-    echo "failed: To Add library dependencies to rootfs ${OUTDIR}/rootfs/lib/"
-    exit 1
+   cp "${TOOLCHAIN_BIN}/lib/ld-linux-aarch64.so.1" ${OUTDIR}/rootfs/lib/
+   echo "Add program intrepreter to rootfs success!"
 fi
 
-cp $TOOLCHAIN_BIN/lib64/* ${OUTDIR}/rootfs/lib64/
-if [ $? -eq 0 ]; then
-    echo "Add library dependencies to rootfs success!"
+echo "Adding shared libraries from ${TOOLCHAIN_BIN}/lib64/"
+if [ -z "$(ls -A ${TOOLCHAIN_BIN}/lib64/)" ]; then
+   echo "Dir is empty"
+   echo "failed: To Add shared libraries to ${OUTDIR}/rootfs/lib64/"
+   exit 1;
 else
-    echo "failed: To Add library dependencies to rootfs ${OUTDIR}/rootfs/lib/"
-    exit 1
+   cp "${TOOLCHAIN_BIN}/lib64/"* ${OUTDIR}/rootfs/lib64/
+   echo "Add shared libraries to rootfs success!"
 fi
 
 # TODO: Make device nodes
