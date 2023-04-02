@@ -12,7 +12,8 @@ BUSYBOX_VERSION=1_33_1
 FINDER_APP_DIR=$(realpath $(dirname $0))
 ARCH=arm64
 CROSS_COMPILE=aarch64-none-linux-gnu-
-TOOLCHAIN_BIN=~/work/arm-cross-compiler/gcc-arm-10.2-2020.11-x86_64-aarch64-none-linux-gnu/aarch64-none-linux-gnu/libc
+TOOLCHAIN_LIB=/usr/local/arm-cross-compiler/install/gcc-arm-10.2-2020.11-x86_64-aarch64-none-linux-gnu/libc
+ASSIGNMENT=/usr/local/assignment-1-shaswathts/finder-app
 
 if [ $# -lt 1 ]
 then
@@ -158,22 +159,22 @@ ${CROSS_COMPILE}readelf -a ${OUTDIR}/rootfs/bin/busybox | grep "Shared library"
 
 # TODO: Add library dependencies to rootfs
 echo "Adding program interpreter from ${TOOLCHAIN_BIN}/lib/ld-linux-aarch64.so.1"
-if [ -z "$(ls -A ${TOOLCHAIN_BIN}/lib/)" ]; then
+if [ -z "$(ls -A ${TOOLCHAIN_LIB}/lib/)" ]; then
    echo "Dir is empty"
    echo "failed: To Add program intrepreter to ${OUTDIR}/rootfs/lib/"
    exit 1;
 else
-   cp "${TOOLCHAIN_BIN}/lib/ld-linux-aarch64.so.1" ${OUTDIR}/rootfs/lib/
+   cp "${TOOLCHAIN_LIB}/lib/ld-linux-aarch64.so.1" ${OUTDIR}/rootfs/lib/
    echo "Add program intrepreter to rootfs success!"
 fi
 
 echo "Adding shared libraries from ${TOOLCHAIN_BIN}/lib64/"
-if [ -z "$(ls -A ${TOOLCHAIN_BIN}/lib64/)" ]; then
+if [ -z "$(ls -A ${TOOLCHAIN_LIB}/lib64/)" ]; then
    echo "Dir is empty"
    echo "failed: To Add shared libraries to ${OUTDIR}/rootfs/lib64/"
    exit 1;
 else
-   cp "${TOOLCHAIN_BIN}/lib64/"* ${OUTDIR}/rootfs/lib64/
+   cp "${TOOLCHAIN_LIB}/lib64/"* ${OUTDIR}/rootfs/lib64/
    echo "Add shared libraries to rootfs success!"
 fi
 
@@ -189,12 +190,12 @@ make CROSS_COMPILE=${CROSS_COMPILE}
 # TODO: Copy the finder related scripts and executables to the /home directory
 # on the target rootfs
 pwd
-cp ~/work/assignment-1-shaswathts/finder-app/conf/* ${OUTDIR}/rootfs/home/conf
-cp ~/work/assignment-1-shaswathts/finder-app/finder.sh ${OUTDIR}/rootfs/home/
-cp ~/work/assignment-1-shaswathts/finder-app/finder-test.sh ${OUTDIR}/rootfs/home/
-cp ~/work/assignment-1-shaswathts/finder-app/writer ${OUTDIR}/rootfs/home/ 
-cp ~/work/assignment-1-shaswathts/finder-app/autorun-qemu.sh ${OUTDIR}/rootfs/home/
-cp ~/work/assignment-1-shaswathts/finder-app/start-qemu-app.sh ${OUTDIR}/rootfs/home/
+cp ${ASSIGNMENT}/conf/* ${OUTDIR}/rootfs/home/conf
+cp ${ASSIGNMENT}/finder.sh ${OUTDIR}/rootfs/home/
+cp ${ASSIGNMENT}/finder-test.sh ${OUTDIR}/rootfs/home/
+cp ${ASSIGNMENT}/writer ${OUTDIR}/rootfs/home/ 
+cp ${ASSIGNMENT}/autorun-qemu.sh ${OUTDIR}/rootfs/home/
+cp ${ASSIGNMENT}/start-qemu-app.sh ${OUTDIR}/rootfs/home/
 
 # TODO: Chown the root directory
 cd ${OUTDIR}/rootfs/
