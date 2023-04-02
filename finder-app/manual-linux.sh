@@ -138,11 +138,12 @@ git clone git://busybox.net/busybox.git
 else
     cd busybox
     make distclean
-    make defconfig 
 fi
 
 # TODO: Make and install busybox
 # The BusyBox build process is similar to the Linux kernel build:
+make defconfig 
+
 make ARCH=${ARCH} \
      CROSS_COMPILE=${CROSS_COMPILE}
 
