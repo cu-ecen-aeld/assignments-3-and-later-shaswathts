@@ -12,8 +12,7 @@ BUSYBOX_VERSION=1_33_1
 FINDER_APP_DIR=$(realpath $(dirname $0))
 ARCH=arm64
 CROSS_COMPILE=aarch64-none-linux-gnu-
-TOOLCHAIN_LIB=/usr/local/arm-cross-compiler/install/gcc-arm-10.2-2020.11-x86_64-aarch64-none-linux-gnu/libc
-ASSIGNMENT=/usr/local/assignment-1-shaswathts/finder-app
+LOCAL_HOME=$(realpath $(dirname $0))
 
 if [ $# -lt 1 ]
 then
@@ -124,7 +123,6 @@ if [ -d "$OUTDIR/rootfs" ]; then
 	mkdir -p bin dev etc home lib lib64 proc sbin sys tmp usr var
     mkdir -p usr/bin usr/lib usr/sbin
     mkdir -p var/log
-    mkdir -p home/conf
 else
     echo "${OUTDIR}/rootfs: does not exist to create filesystem structure"
     exit 1;
@@ -139,12 +137,12 @@ git clone git://busybox.net/busybox.git
     # TODO:  Configure busybox
 else
     cd busybox
+    make distclean
+    make defconfig 
 fi
 
 # TODO: Make and install busybox
 # The BusyBox build process is similar to the Linux kernel build:
-make defconfig 
-
 make ARCH=${ARCH} \
      CROSS_COMPILE=${CROSS_COMPILE}
 
@@ -158,23 +156,25 @@ ${CROSS_COMPILE}readelf -a ${OUTDIR}/rootfs/bin/busybox | grep "program interpre
 ${CROSS_COMPILE}readelf -a ${OUTDIR}/rootfs/bin/busybox | grep "Shared library"
 
 # TODO: Add library dependencies to rootfs
-echo "Adding program interpreter from ${TOOLCHAIN_BIN}/lib/ld-linux-aarch64.so.1"
-if [ -z "$(ls -A ${TOOLCHAIN_LIB}/lib/)" ]; then
+echo "Adding program interpreter from ${LOCAL_HOME}/libs/ld-linux-aarch64.so.1"
+if [ -z "$(ls -A ${LOCAL_HOME}/libs/)" ]; then
    echo "Dir is empty"
    echo "failed: To Add program intrepreter to ${OUTDIR}/rootfs/lib/"
    exit 1;
 else
-   cp "${TOOLCHAIN_LIB}/lib/ld-linux-aarch64.so.1" ${OUTDIR}/rootfs/lib/
+   cp ${LOCAL_HOME}/libs/ld-linux-aarch64.so.1 ${OUTDIR}/rootfs/lib/
    echo "Add program intrepreter to rootfs success!"
 fi
 
-echo "Adding shared libraries from ${TOOLCHAIN_BIN}/lib64/"
-if [ -z "$(ls -A ${TOOLCHAIN_LIB}/lib64/)" ]; then
+echo "Adding shared libraries from ${LOCAL_HOME}/libs/"
+if [ -z "$(ls -A ${LOCAL_HOME}/libs/)" ]; then
    echo "Dir is empty"
    echo "failed: To Add shared libraries to ${OUTDIR}/rootfs/lib64/"
    exit 1;
 else
-   cp "${TOOLCHAIN_LIB}/lib64/"* ${OUTDIR}/rootfs/lib64/
+   cp ${LOCAL_HOME}/libs/libc.so.6 ${OUTDIR}/rootfs/lib64/
+   cp ${LOCAL_HOME}/libs/libm.so.6 ${OUTDIR}/rootfs/lib64/
+   cp ${LOCAL_HOME}/libs/libresolv.so.2 ${OUTDIR}/rootfs/lib64/
    echo "Add shared libraries to rootfs success!"
 fi
 
@@ -183,19 +183,19 @@ sudo mknod ${OUTDIR}/rootfs/dev/null c 1 3
 sudo mknod ${OUTDIR}/rootfs/dev/console c 5 1
 
 # TODO: Clean and build the writer utility
-cd ~/work/assignment-1-shaswathts/finder-app/
+cd ${LOCAL_HOME}
 make clean
 make CROSS_COMPILE=${CROSS_COMPILE}
 
 # TODO: Copy the finder related scripts and executables to the /home directory
 # on the target rootfs
 pwd
-cp ${ASSIGNMENT}/conf/* ${OUTDIR}/rootfs/home/conf
-cp ${ASSIGNMENT}/finder.sh ${OUTDIR}/rootfs/home/
-cp ${ASSIGNMENT}/finder-test.sh ${OUTDIR}/rootfs/home/
-cp ${ASSIGNMENT}/writer ${OUTDIR}/rootfs/home/ 
-cp ${ASSIGNMENT}/autorun-qemu.sh ${OUTDIR}/rootfs/home/
-cp ${ASSIGNMENT}/start-qemu-app.sh ${OUTDIR}/rootfs/home/
+cp -R ${LOCAL_HOME}/../conf/ ${OUTDIR}/rootfs/home/
+cp ${LOCAL_HOME}/finder.sh ${OUTDIR}/rootfs/home/
+cp ${LOCAL_HOME}/finder-test.sh ${OUTDIR}/rootfs/home/
+cp ${LOCAL_HOME}/writer ${OUTDIR}/rootfs/home/ 
+cp ${LOCAL_HOME}/autorun-qemu.sh ${OUTDIR}/rootfs/home/
+cp ${LOCAL_HOME}/start-qemu-app.sh ${OUTDIR}/rootfs/home/
 
 # TODO: Chown the root directory
 cd ${OUTDIR}/rootfs/
