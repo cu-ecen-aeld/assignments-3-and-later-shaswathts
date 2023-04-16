@@ -1,0 +1,43 @@
+#! /bin/sh
+# /etc/init.d/S99aesdsocket
+# Author: Shaswath
+#
+
+start() {
+	AESDSOCKET_ARGS="$AESDSOCKET_ARGS -d"
+
+	printf "Starting aesdsocket program: "
+	umask 077
+
+	start-stop-daemon -S --exec /usr/bin/aesdsocket -- $AESDSOCKET_ARGS
+	[ $? = 0 ] && echo "OK" || echo "FAIL"
+}
+
+stop() {
+	printf "Stopping aesdsocket program: "
+	start-stop-daemon -K -n aesdsocket
+	[ $? = 0 ] && echo "OK" || echo "FAIL"
+}
+
+restart() {
+	stop
+	start
+}
+
+case "$1" in
+  start)
+    start
+    ;;
+  stop)
+    stop
+    ;;
+  restart)
+    restart
+    ;;
+  *)
+    echo "Usage: /etc/init.d/S99aesdsocket {start|stop|restart}"
+    exit 1
+    ;;
+esac
+
+exit 0

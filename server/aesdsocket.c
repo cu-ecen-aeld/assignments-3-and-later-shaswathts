@@ -16,7 +16,7 @@
 #define PORT "9000"
 #define LOCALHOST "localhost"
 #define BACKLOG 10
-#define MAXDATASIZE 1024
+#define MAXDATASIZE 3099
 #define OUTFILE "/tmp/var/aesdsocket"
 
 static bool sigint = false;
@@ -189,6 +189,7 @@ int main(int argc, char **argv)
     socklen_t                      addr_size                = 0;
     bool                           start_daemeon            = false;
     char                           ipstr[INET6_ADDRSTRLEN]  = {0};
+    char                           *ipver                   = NULL;
     char                           buf[MAXDATASIZE]         = {0};
     void                           *addr                    = NULL;
     void                           *str_read                = NULL;
@@ -213,7 +214,7 @@ int main(int argc, char **argv)
     hints.ai_socktype = SOCK_STREAM;
     hints.ai_flags = AI_PASSIVE;
 
-    getaddr_fd = getaddrinfo(LOCALHOST, PORT, &hints, &result);
+    getaddr_fd = getaddrinfo(NULL, PORT, &hints, &result);
     if (getaddr_fd != 0) {
         syslog(LOG_ERR, "Failed: To get socket address (%s)\n", strerror(errno));
         return -1;
@@ -221,26 +222,26 @@ int main(int argc, char **argv)
         printf("Getting address for socket success\n");
     }
 
-    /* Creating the socket for localhost */
-    socket_fd = socket(result->ai_family, result->ai_socktype, result->ai_protocol);
-    if (socket_fd == -1) {
-        syslog(LOG_ERR, "Failed: To create socket (%s)\n", strerror(errno));
-        return -1;
-    } else {
-        printf("Creating socket success\n");
-    }
-
     // loop through all the results and bind to the first we can
     for(p_res = result; p_res != NULL; p_res = result->ai_next) {
+        /* Creating the socket for localhost */
+        socket_fd = socket(result->ai_family, result->ai_socktype, result->ai_protocol);
+        if (socket_fd == -1) {
+            syslog(LOG_ERR, "Failed: To create socket (%s)\n", strerror(errno));
+            return -1;
+        } else {
+            printf("Creating socket success\n");
+        }
+        
         if (setsockopt(socket_fd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(int)) == -1) {
-            perror("setsockopt");
+            syslog(LOG_ERR, "Failed: To setsockopt (%s)\n", strerror(errno));
             exit(1);
         }
 
         if (bind(socket_fd, p_res->ai_addr, p_res->ai_addrlen) == -1) {
             close(socket_fd);
-            perror("server: bind");
-            continue;
+            syslog(LOG_ERR, "Failed: To bind socket (%s)\n", strerror(errno));
+            return -1;
         }
         break;
     }
@@ -302,11 +303,13 @@ int main(int argc, char **argv)
         if (incomming_addr.ss_family == AF_INET) {
             struct sockaddr_in *ipv4 = (struct sockaddr_in *)&incomming_addr;
             addr = &(ipv4->sin_addr);
+            ipver = "IPv4";
         }
 
         else {
             struct sockaddr_in6 *ipv6 = (struct sockaddr_in6 *)&incomming_addr;
             addr = &(ipv6->sin6_addr);
+            ipver = "IPv6";
         }
 
         /* Convert the IP address to string */
@@ -314,8 +317,8 @@ int main(int argc, char **argv)
             fprintf(stderr, "Failed: Convert the IP address to string (%s)\n", strerror(errno));
             return -1;
         } else {
-            syslog(LOG_INFO, "Accepted connection from %s\n", ipstr);
-            fprintf(stderr, "\nAccepted connection from %s\n", ipstr);
+            syslog(LOG_INFO, "Accepted connection from [%s:%s]\n", ipver, ipstr);
+            fprintf(stderr, "\nAccepted connection from [%s:%s]\n", ipver, ipstr);
         }
 
         num_bytes = recv(incomming_fd, buf, MAXDATASIZE-1, 0);
@@ -331,7 +334,7 @@ int main(int argc, char **argv)
         }
 
         else if (((num_bytes % (MAXDATASIZE-1)) == 0) && (buf[num_bytes-1] != '\n')) {
-            fprintf(stderr, "Need to resize or write in blocks or each char\n");
+            fprintf(stderr, "writing stream in blocks of [%d]\n", MAXDATASIZE);
             while (buf[num_bytes-1] != '\n')
             {    
                 ret = write_to_file(buf);
@@ -356,7 +359,7 @@ int main(int argc, char **argv)
 
         str_read = read_from_file();
         if (str_read != NULL) {
-            fprintf(stderr, "\n%s -> String read from file..\n", (char *)str_read);
+            fprintf(stderr, "%s -> String read from file..\n", (char *)str_read);
             num_bytes = send(incomming_fd, str_read, strlen((char *)str_read), 0);
             if (num_bytes == -1) {
                 syslog(LOG_ERR, "Failed: To recive stream from socket (%s)\n", strerror(errno));
@@ -364,7 +367,8 @@ int main(int argc, char **argv)
                 return -1;
             }
             close(incomming_fd);
-            fprintf(stderr, "Closed connection from %s\n", ipstr);
+            fprintf(stderr, "Closed connection from [%s:%s]\n", ipver, ipstr);
+            syslog(LOG_INFO, "Closed connection from [%s:%s]\n", ipver, ipstr);
         }
         free(str_read);
     } while ((!sigint) || (!sigterm));    
