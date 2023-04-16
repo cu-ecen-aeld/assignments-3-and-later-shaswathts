@@ -17,7 +17,7 @@
 #define LOCALHOST "localhost"
 #define BACKLOG 10
 #define MAXDATASIZE 3099
-#define OUTFILE "/tmp/var/aesdsocket"
+#define OUTFILE "/tmp/var/aesdsocketdata"
 
 static bool sigint = false;
 static bool sigterm = false;
