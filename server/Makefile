@@ -2,7 +2,7 @@ CC = ${CROSS_COMPILE}gcc
 
 CROSS_COMPILE ?=
 
-CFLAGS = -g -Wall -Werror
+CFLAGS = -g -Wall -Werror -pthread
 
 .DEFAULT_GOAL := aesdsocket
 

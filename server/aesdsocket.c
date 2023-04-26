@@ -5,6 +5,7 @@
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <sys/wait.h>
+#include <sys/time.h>
 #include <netdb.h>
 #include <syslog.h>
 #include <errno.h>
@@ -12,15 +13,42 @@
 #include <unistd.h>
 #include <stdbool.h>
 #include <arpa/inet.h>
+#include <pthread.h>
+#include <time.h>
+#include <sys/queue.h>
 
 #define PORT "9000"
 #define LOCALHOST "localhost"
 #define BACKLOG 10
-#define MAXDATASIZE 3099
+#define MAXDATASIZE 1024
 #define OUTFILE "/tmp/var/aesdsocketdata"
+#define TIMESTAMP_INTERVAL 10
+
+#define handle_error_en(en, msg) \
+               do { errno = en; perror(msg); exit(EXIT_FAILURE); } while (0)
+
+typedef struct 
+{
+    pthread_t           thread_id;
+    pthread_mutex_t     *mutex_lock;
+    int                 client_fd;
+        
+    bool                thread_complete_success;
+} thread_data;
+
+
+// The data type for the node
+struct node
+{
+    thread_data t_data;
+    TAILQ_ENTRY(node) nodes; 
+};
+
 
 static bool sigint = false;
 static bool sigterm = false;
+static int running = 1;
+static int thread_count = 0;
 
 
 void signal_handler(int signal_number)
@@ -117,7 +145,7 @@ char *read_from_file(void)
         exit(0);
     }
 
-    buffer = malloc(file_size);
+    buffer = malloc(file_size + sizeof(char)); // why +1 -> (https://stackoverflow.com/a/12230807)
     if (buffer == NULL) {
         fprintf(stderr, "Failed: to malloc buffer (%s)\n", strerror(errno));
         exit(0);
@@ -166,6 +194,222 @@ int write_to_file(char *string)
 }
 
 
+void *do_process(void *data)
+{
+    struct node *e = (struct node *)data;
+    char buf[MAXDATASIZE] = {0};
+    ssize_t num_bytes = 0;
+    void *str_read = NULL;
+    int ret = -1;
+
+    printf("\n\n#### STARTED PROCESS #### \n\n");
+    // thread_sync->thread_complete_success = false;
+
+    num_bytes = recv(e->t_data.client_fd, buf, MAXDATASIZE-1, 0);
+    if (num_bytes <= 0) {
+        syslog(LOG_ERR, "Failed: To recive stream from socket (%s)\n", strerror(errno));
+        exit(EXIT_FAILURE);
+    }
+
+    if (buf[num_bytes - 1] == '\n') {
+        pthread_mutex_lock(e->t_data.mutex_lock);
+        ret = write_to_file(buf);
+        pthread_mutex_unlock(e->t_data.mutex_lock);
+        if (ret == 0)
+            memset(buf, 0, num_bytes);
+    }
+
+    else if (((num_bytes % (MAXDATASIZE-1)) == 0) && (buf[num_bytes-1] != '\n')) {
+        fprintf(stderr, "writing stream in blocks of [%d]\n", MAXDATASIZE);
+        while (buf[num_bytes-1] != '\n')
+        {    
+            pthread_mutex_lock(e->t_data.mutex_lock);
+            ret = write_to_file(buf);
+            pthread_mutex_unlock(e->t_data.mutex_lock);
+            if (ret == 0) {
+                memset(buf, 0, num_bytes);
+                num_bytes = recv(e->t_data.client_fd, buf, MAXDATASIZE-1, 0);
+                if (num_bytes <= 0) {
+                    syslog(LOG_ERR, "Failed: To recive stream from socket (%s)\n", strerror(errno));
+                    exit(EXIT_FAILURE);
+                }
+            }
+        }
+        pthread_mutex_lock(e->t_data.mutex_lock);
+        ret = write_to_file(buf);
+        pthread_mutex_unlock(e->t_data.mutex_lock);
+        if (ret == 0)
+            memset(buf, 0, MAXDATASIZE);
+    }
+
+    else {
+        fprintf(stderr, "Size dosent match..!\n");
+        exit(EXIT_FAILURE);
+    }
+
+    str_read = read_from_file();
+    if (str_read != NULL) {
+        fprintf(stderr, "%s -> String read from file..\n", (char *)str_read);
+        num_bytes = send(e->t_data.client_fd, str_read, strlen((char *)str_read), 0);
+        if (num_bytes == -1) {
+            syslog(LOG_ERR, "Failed: To recive stream from socket (%s)\n", strerror(errno));
+            fprintf(stderr, "Failed: To send stream to socket (%s)\n", strerror(errno));
+            exit(EXIT_FAILURE);
+        }
+        // fprintf(stderr, "Closed connection from [%s:%s]\n", ipver, ipstr);
+        // syslog(LOG_INFO, "Closed connection from [%s:%s]\n", ipver, ipstr);
+    }
+    free(str_read);
+    close(e->t_data.client_fd);
+    e->t_data.thread_complete_success = true;
+
+    printf("\n\n#### FINISHED PROCESS #### \n\n");
+
+    return NULL;
+}
+
+
+struct node *do_accept(int socfd, struct sockaddr_storage *incomming_addr, pthread_mutex_t *mutex)
+{
+    socklen_t addr_size = 0;
+    int incomming_fd = -1;
+    char ipstr[INET6_ADDRSTRLEN];
+    char *ipver = NULL;
+    void *addr = NULL;
+    struct node *e = NULL;
+    
+
+    addr_size = sizeof(*incomming_addr);
+    incomming_fd = accept(socfd, (struct sockaddr *)incomming_addr, &addr_size);
+    if (incomming_fd == -1) {
+        syslog(LOG_ERR, "Failed: to accept from incomming address (%s)\n", strerror(errno));
+        return NULL;
+    }
+
+    if (incomming_addr->ss_family == AF_INET) {
+        struct sockaddr_in *ipv4 = (struct sockaddr_in *)incomming_addr;
+        addr = &(ipv4->sin_addr);
+        ipver = "IPv4";
+    } else {
+        struct sockaddr_in6 *ipv6 = (struct sockaddr_in6 *)incomming_addr;
+        addr = &(ipv6->sin6_addr);
+        ipver = "IPv6";
+    }
+
+    /* Convert the IP address to string */
+    if (inet_ntop(incomming_addr->ss_family, addr, ipstr, sizeof(ipstr)) == NULL) {
+        fprintf(stderr, "Failed: Convert the IP address to string (%s)\n", strerror(errno));
+        return NULL;
+    } else {
+        syslog(LOG_INFO, "Accepted connection from [%s:%s]\n", ipver, ipstr);
+        fprintf(stderr, "\nAccepted connection from [%s:%s]\n", ipver, ipstr);
+    }
+
+    if (incomming_fd != -1) {
+        e = malloc(sizeof(struct node));
+        if (e == NULL) {
+            fprintf(stderr, "Failed TAILQ malloc..\n");
+            return NULL;
+        }
+        e->t_data.mutex_lock = mutex;
+        e->t_data.thread_complete_success = false;
+        e->t_data.client_fd = incomming_fd;
+    }
+
+    return e;
+}
+
+
+int get_tv_cur_minus_given(struct timeval *tv, struct timeval *tp_given, int *sign)
+{
+    struct timeval tp_cur;
+
+    gettimeofday(&tp_cur, NULL);
+
+    tv->tv_sec  = tp_cur.tv_sec - tp_given->tv_sec;
+    tv->tv_usec = tp_cur.tv_usec - tp_given->tv_usec;
+
+    if(tv->tv_sec > 0) {
+        *sign = 1;
+        if(tv->tv_usec < 0) {
+            tv->tv_sec--;
+            tv->tv_usec = 1000000 + tv->tv_usec;
+        }
+    }
+    else if (tv->tv_sec == 0) 
+    {
+        if(tv->tv_usec == 0)
+            *sign = 0;
+
+        else if(tv->tv_usec < 0) {
+            *sign = -1;
+            tv->tv_usec *= -1;
+        }
+        
+        else
+            *sign = 1;
+    }
+    else {
+        *sign = -1;
+        if(tv->tv_usec > 0) {
+            tv->tv_sec++;
+            tv->tv_usec = 1000000 - tv->tv_usec;
+        }
+        
+        else if(tv->tv_usec < 0)
+            tv->tv_usec *= -1;
+    }
+
+    return 0;
+}
+
+void *do_timestamp(void *data)
+{
+    struct node *thread_sync = (struct node *)data;
+    struct timeval tv_last_run;
+    struct timeval tv_diff;
+    int sign = 0;
+    char timestamp[50];
+    struct tm date;
+
+    gettimeofday(&tv_last_run, NULL);
+    gettimeofday(&tv_diff, NULL);
+
+    while (1)
+    {
+        /* The only exit way for this thread */
+        if (!running) {
+            thread_sync->t_data.thread_complete_success = true;
+            pthread_exit(thread_sync);
+        } else {
+            thread_sync->t_data.thread_complete_success = false;
+        }
+
+        get_tv_cur_minus_given(&tv_diff, &tv_last_run, &sign);
+
+        // printf("Time: %ld\n", tv_diff.tv_sec);
+        if (tv_diff.tv_sec >= TIMESTAMP_INTERVAL) {
+            gettimeofday(&tv_last_run, NULL);
+
+            time_t t = time(NULL);
+            if (t == (time_t)(-1)) {
+                exit(0);
+            }
+
+            if (gmtime_r(&t, &date) == NULL) {
+                exit(0);
+            }
+            sprintf(timestamp, "timestamp:%d-%02d-%02d %02d:%02d:%02d\n", date.tm_year + 1900, date.tm_mon + 1, date.tm_mday, date.tm_hour, date.tm_min, date.tm_sec);
+            pthread_mutex_lock(thread_sync->t_data.mutex_lock);
+            write_to_file(timestamp);
+            pthread_mutex_unlock(thread_sync->t_data.mutex_lock);
+        }
+    }
+
+    return NULL;
+}
+
+
 int main(int argc, char **argv) 
 {
     /* Setting up syslog facility */
@@ -180,20 +424,19 @@ int main(int argc, char **argv)
     int                            getaddr_fd               = 0;
     int                            yes                      = 1;
     int                            listen_socket            = 0;
-    int                            incomming_fd             = 0;
-    ssize_t                        num_bytes                = 0;
+    // int                            incomming_fd             = 0;
     struct addrinfo                *result                  = NULL;
     struct addrinfo                *p_res                   = NULL;
     struct addrinfo                hints;
     struct sockaddr_storage        incomming_addr;
-    socklen_t                      addr_size                = 0;
     bool                           start_daemeon            = false;
-    char                           ipstr[INET6_ADDRSTRLEN]  = {0};
-    char                           *ipver                   = NULL;
-    char                           buf[MAXDATASIZE]         = {0};
-    void                           *addr                    = NULL;
-    void                           *str_read                = NULL;
-    int                            ret                      = -1;
+    int                            ret;
+    // bool                           *ts_ret;
+    // pthread_t                      thread1;
+    // pthread_t                      timestamp;
+    pthread_mutex_t                mutex;
+    // thread_data                    *thread_sync;
+
 
     /* Options handler for starting dameon */
     while ((opt = getopt(argc, argv, "d")) != -1) {
@@ -276,102 +519,124 @@ int main(int argc, char **argv)
         make_daemon();
     }
 
-    do 
+    ret = pthread_mutex_init(&mutex, NULL);
+    if(ret != 0) {
+        handle_error_en(ret, "Mutex init failed..\n");
+    }
+
+    /* This macro creates the data type for the head of the queue
+     * for nodes of type 'struct node' 
+     */
+    TAILQ_HEAD(head_s, node) head;
+
+    /* Initialize the head before use */
+    TAILQ_INIT(&head);
+
+    struct node *e;
+    e = malloc(sizeof(struct node));
+    if (e == NULL) {
+        fprintf(stderr, "TAILQ node malloc for timestamp thread failed");
+        exit(1);
+    }
+
+    e->t_data.mutex_lock = &mutex;
+    TAILQ_INSERT_TAIL(&head, e, nodes);
+    thread_count++;
+    ret = pthread_create(&e->t_data.thread_id, NULL, do_timestamp, (void *)e);
+    if (ret != 0) {
+        handle_error_en(ret, "Failed: to create timestamp thread");
+    }
+    printf("### Started timestamp thread: [%d]\n", thread_count);
+    e = NULL;
+
+    do
     {
-        addr_size = sizeof(incomming_addr);
-        incomming_fd = accept(socket_fd, (struct sockaddr *)&incomming_addr, &addr_size);
-        if (incomming_fd == -1) {
-            syslog(LOG_ERR, "Failed: to accept from incomming address (%s)\n", strerror(errno));
-        } 
+        e = do_accept(socket_fd, &incomming_addr, &mutex);
 
         if (sigint || sigterm) {
-            syslog(LOG_DEBUG, "Caught signal. Hence exiting\n");
-            
-            close(socket_fd);
+            running = 0;
+            break;
+        }
 
-            syslog(LOG_INFO, "Closing socket\n");
-            closelog();
+        if (e != NULL) {
+            // Actually insert the node e into the queue at the end
+            TAILQ_INSERT_TAIL(&head, e, nodes);
+            thread_count++;
 
-            if (remove(OUTFILE) == 0) {
-                printf("Removed file successfully\n");
-            } else {
-                printf("Failed to remove file with error: %s\n", strerror(errno));
+            ret = pthread_create(&e->t_data.thread_id, NULL, do_process, (void *)e);
+            if (ret != 0) {
+                handle_error_en(ret, "Pthread create\n");
             }
-            exit(0);
-        }
-
-        if (incomming_addr.ss_family == AF_INET) {
-            struct sockaddr_in *ipv4 = (struct sockaddr_in *)&incomming_addr;
-            addr = &(ipv4->sin_addr);
-            ipver = "IPv4";
-        }
-
-        else {
-            struct sockaddr_in6 *ipv6 = (struct sockaddr_in6 *)&incomming_addr;
-            addr = &(ipv6->sin6_addr);
-            ipver = "IPv6";
-        }
-
-        /* Convert the IP address to string */
-        if (inet_ntop(incomming_addr.ss_family, addr, ipstr, sizeof(ipstr)) == NULL) {
-            fprintf(stderr, "Failed: Convert the IP address to string (%s)\n", strerror(errno));
-            return -1;
+            e = NULL;
+            printf("### Started process thread: [%d]\n", thread_count);
         } else {
-            syslog(LOG_INFO, "Accepted connection from [%s:%s]\n", ipver, ipstr);
-            fprintf(stderr, "\nAccepted connection from [%s:%s]\n", ipver, ipstr);
+            exit(1);
         }
 
-        num_bytes = recv(incomming_fd, buf, MAXDATASIZE-1, 0);
-        if (num_bytes <= 0) {
-            syslog(LOG_ERR, "Failed: To recive stream from socket (%s)\n", strerror(errno));
-            return -1;
-        }
+    } while (!(sigint) || !(sigterm));
 
-        if (buf[num_bytes - 1] == '\n') {
-            ret = write_to_file(buf);
-            if (ret == 0)
-                memset(buf, 0, num_bytes);
-        }
+    syslog(LOG_DEBUG, "Caught signal. Exiting\n");
+    fprintf(stderr, "Caught signal. Exiting\n");
 
-        else if (((num_bytes % (MAXDATASIZE-1)) == 0) && (buf[num_bytes-1] != '\n')) {
-            fprintf(stderr, "writing stream in blocks of [%d]\n", MAXDATASIZE);
-            while (buf[num_bytes-1] != '\n')
-            {    
-                ret = write_to_file(buf);
-                if (ret == 0) {
-                    memset(buf, 0, num_bytes);
-                    num_bytes = recv(incomming_fd, buf, MAXDATASIZE-1, 0);
-                    if (num_bytes <= 0) {
-                        syslog(LOG_ERR, "Failed: To recive stream from socket (%s)\n", strerror(errno));
-                        return -1;
-                    }
-                }
-            }
-            ret = write_to_file(buf);
-            if (ret == 0)
-                memset(buf, 0, MAXDATASIZE);
-        }
+    // ret = pthread_join(timestamp, (void **) &ts_ret);
+    // if (ret != 0) {
+    //     handle_error_en(ret, "pthread_join");
+    // }
 
-        else {
-            fprintf(stderr, "Size dosent match..!\n");
-            return -1;
-        }
+    // if (((thread_data *)*&ts_ret)->thread_complete_success) {
+    //     fprintf(stderr, "Exit from timestamp thread success\n");
+    // } else {
+    //     fprintf(stderr, "Exit from timestamp thread (No return value)\n");
+    // }
 
-        str_read = read_from_file();
-        if (str_read != NULL) {
-            fprintf(stderr, "%s -> String read from file..\n", (char *)str_read);
-            num_bytes = send(incomming_fd, str_read, strlen((char *)str_read), 0);
-            if (num_bytes == -1) {
-                syslog(LOG_ERR, "Failed: To recive stream from socket (%s)\n", strerror(errno));
-                fprintf(stderr, "Failed: To send stream to socket (%s)\n", strerror(errno));
-                return -1;
-            }
-            close(incomming_fd);
-            fprintf(stderr, "Closed connection from [%s:%s]\n", ipver, ipstr);
-            syslog(LOG_INFO, "Closed connection from [%s:%s]\n", ipver, ipstr);
+    // Join the queue
+    TAILQ_FOREACH(e, &head, nodes)
+    {
+        ret = pthread_join(e->t_data.thread_id, NULL);
+        if (ret != 0) {
+            handle_error_en(ret, "Failed: To join thread\n");
         }
-        free(str_read);
-    } while ((!sigint) || (!sigterm));    
+        if (e->t_data.thread_complete_success) {
+            fprintf(stderr, "Joining thread success..!\n");
+        }
+    }
+
+    // free the elements from the queue
+    while (!TAILQ_EMPTY(&head))
+    {
+        e = TAILQ_FIRST(&head);
+        TAILQ_REMOVE(&head, e, nodes);
+        thread_count--;
+        free(e);
+        e = NULL;
+        printf("### Removed thread from list: [%d]\n", thread_count);
+    }
+
+    if (thread_count != 0) {
+        printf("ALL NODES IN THE LIST NOT REMOVED (pending:%d)\n", thread_count);        
+    }
+
+    ret = remove(OUTFILE);
+    if (ret != 0) {
+        handle_error_en(ret, "pthread_join");
+    }
+    fprintf(stderr, "Removed file successfully\n");
+
+    ret = pthread_mutex_destroy(&mutex);
+    if (ret != 0) {
+        handle_error_en(ret, "Mutex destroyed failed..\n");
+    }
+    // free(thread_sync);
+
+    ret = close(socket_fd);
+    if (ret != 0) {
+        handle_error_en(ret, "Failed to close socket FD..\n");
+    }
+
+    syslog(LOG_INFO, "Closing socket\n");
+    closelog();
+
+    fprintf(stderr, "aesdsocket program exited gracefully\n");
 
     return 0;
 }
