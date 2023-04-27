@@ -16,6 +16,7 @@
 #include <pthread.h>
 #include <time.h>
 #include <sys/queue.h>
+#include <assert.h>
 
 #define PORT "9000"
 #define LOCALHOST "localhost"
@@ -26,6 +27,15 @@
 
 #define handle_error_en(en, msg) \
                do { errno = en; perror(msg); exit(EXIT_FAILURE); } while (0)
+
+#define RESET   "\033[0m"
+#define RED     "\033[31m"      /* Red */
+#define GREEN   "\033[32m"      /* Green */
+#define YELLOW  "\033[33m"      /* Yellow */
+#define BLUE    "\033[34m"      /* Blue */
+
+#define BOLDMAGENTA "\033[1m\033[35m"      /* Bold Magenta */
+#define BOLDGREEN   "\033[1m\033[32m"      /* Bold Green */
 
 typedef struct 
 {
@@ -49,6 +59,7 @@ static bool sigint = false;
 static bool sigterm = false;
 static int running = 1;
 static int thread_count = 0;
+static int thread_remove = 0;
 
 
 void signal_handler(int signal_number)
@@ -171,7 +182,7 @@ int write_to_file(char *string)
     size_t      bytes_wrote = 0;
     int         str_len = 0;
 
-    printf("String recived: %s -> writing to file %s\n", string, OUTFILE);
+    // printf(BLUE "String recived: %s -> writing to file %s\n" RESET, string, OUTFILE);
 
     system("mkdir -p /tmp/var");
 
@@ -201,9 +212,6 @@ void *do_process(void *data)
     ssize_t num_bytes = 0;
     void *str_read = NULL;
     int ret = -1;
-
-    printf("\n\n#### STARTED PROCESS #### \n\n");
-    // thread_sync->thread_complete_success = false;
 
     num_bytes = recv(e->t_data.client_fd, buf, MAXDATASIZE-1, 0);
     if (num_bytes <= 0) {
@@ -249,7 +257,7 @@ void *do_process(void *data)
 
     str_read = read_from_file();
     if (str_read != NULL) {
-        fprintf(stderr, "%s -> String read from file..\n", (char *)str_read);
+        // printf(YELLOW "%s -> String read from file..\n" RESET, (char *)str_read);
         num_bytes = send(e->t_data.client_fd, str_read, strlen((char *)str_read), 0);
         if (num_bytes == -1) {
             syslog(LOG_ERR, "Failed: To recive stream from socket (%s)\n", strerror(errno));
@@ -262,61 +270,50 @@ void *do_process(void *data)
     free(str_read);
     close(e->t_data.client_fd);
     e->t_data.thread_complete_success = true;
-
-    printf("\n\n#### FINISHED PROCESS #### \n\n");
+    printf("Finished process\n");
 
     return NULL;
 }
 
 
-struct node *do_accept(int socfd, struct sockaddr_storage *incomming_addr, pthread_mutex_t *mutex)
+int do_accept(int socfd, struct sockaddr_storage *incomming_addr)
 {
     socklen_t addr_size = 0;
     int incomming_fd = -1;
     char ipstr[INET6_ADDRSTRLEN];
     char *ipver = NULL;
     void *addr = NULL;
-    struct node *e = NULL;
     
 
     addr_size = sizeof(*incomming_addr);
     incomming_fd = accept(socfd, (struct sockaddr *)incomming_addr, &addr_size);
-    if (incomming_fd == -1) {
-        syslog(LOG_ERR, "Failed: to accept from incomming address (%s)\n", strerror(errno));
-        return NULL;
+    if ((incomming_fd == -1) || (incomming_fd == EINTR)) {
+        incomming_fd = errno;
+        printf("Execption occured. (%s)\n", strerror(incomming_fd));
+        syslog(LOG_ERR, "Failed: to accept from incomming address (%s)\n", strerror(incomming_fd));
     }
 
-    if (incomming_addr->ss_family == AF_INET) {
-        struct sockaddr_in *ipv4 = (struct sockaddr_in *)incomming_addr;
-        addr = &(ipv4->sin_addr);
-        ipver = "IPv4";
-    } else {
-        struct sockaddr_in6 *ipv6 = (struct sockaddr_in6 *)incomming_addr;
-        addr = &(ipv6->sin6_addr);
-        ipver = "IPv6";
-    }
-
-    /* Convert the IP address to string */
-    if (inet_ntop(incomming_addr->ss_family, addr, ipstr, sizeof(ipstr)) == NULL) {
-        fprintf(stderr, "Failed: Convert the IP address to string (%s)\n", strerror(errno));
-        return NULL;
-    } else {
-        syslog(LOG_INFO, "Accepted connection from [%s:%s]\n", ipver, ipstr);
-        fprintf(stderr, "\nAccepted connection from [%s:%s]\n", ipver, ipstr);
-    }
-
-    if (incomming_fd != -1) {
-        e = malloc(sizeof(struct node));
-        if (e == NULL) {
-            fprintf(stderr, "Failed TAILQ malloc..\n");
-            return NULL;
+    else {
+        if (incomming_addr->ss_family == AF_INET) {
+            struct sockaddr_in *ipv4 = (struct sockaddr_in *)incomming_addr;
+            addr = &(ipv4->sin_addr);
+            ipver = "IPv4";
+        } else {
+            struct sockaddr_in6 *ipv6 = (struct sockaddr_in6 *)incomming_addr;
+            addr = &(ipv6->sin6_addr);
+            ipver = "IPv6";
         }
-        e->t_data.mutex_lock = mutex;
-        e->t_data.thread_complete_success = false;
-        e->t_data.client_fd = incomming_fd;
+
+        /* Convert the IP address to string */
+        if (inet_ntop(incomming_addr->ss_family, addr, ipstr, sizeof(ipstr)) == NULL) {
+            fprintf(stderr, "Failed: Convert the IP address to string (%s)\n", strerror(errno));
+        } else {
+            syslog(LOG_INFO, "Accepted connection from [%s:%s]\n", ipver, ipstr);
+            fprintf(stderr, "\nAccepted connection from [%s:%s]\n", ipver, ipstr);
+        }
     }
 
-    return e;
+    return incomming_fd;
 }
 
 
@@ -387,7 +384,6 @@ void *do_timestamp(void *data)
 
         get_tv_cur_minus_given(&tv_diff, &tv_last_run, &sign);
 
-        // printf("Time: %ld\n", tv_diff.tv_sec);
         if (tv_diff.tv_sec >= TIMESTAMP_INTERVAL) {
             gettimeofday(&tv_last_run, NULL);
 
@@ -399,7 +395,7 @@ void *do_timestamp(void *data)
             if (gmtime_r(&t, &date) == NULL) {
                 exit(0);
             }
-            sprintf(timestamp, "timestamp:%d-%02d-%02d %02d:%02d:%02d\n", date.tm_year + 1900, date.tm_mon + 1, date.tm_mday, date.tm_hour, date.tm_min, date.tm_sec);
+            sprintf(timestamp, BOLDMAGENTA "timestamp:%d-%02d-%02d %02d:%02d:%02d\n" RESET, date.tm_year + 1900, date.tm_mon + 1, date.tm_mday, date.tm_hour, date.tm_min, date.tm_sec);
             pthread_mutex_lock(thread_sync->t_data.mutex_lock);
             write_to_file(timestamp);
             pthread_mutex_unlock(thread_sync->t_data.mutex_lock);
@@ -424,18 +420,15 @@ int main(int argc, char **argv)
     int                            getaddr_fd               = 0;
     int                            yes                      = 1;
     int                            listen_socket            = 0;
-    // int                            incomming_fd             = 0;
     struct addrinfo                *result                  = NULL;
     struct addrinfo                *p_res                   = NULL;
-    struct addrinfo                hints;
-    struct sockaddr_storage        incomming_addr;
+    struct addrinfo                hints                    = {0};
+    struct sockaddr_storage        incomming_addr           = {0};
     bool                           start_daemeon            = false;
-    int                            ret;
-    // bool                           *ts_ret;
-    // pthread_t                      thread1;
-    // pthread_t                      timestamp;
+    int                            ret                      = 0;
+    int                            incomming_fd             = -1;
     pthread_mutex_t                mutex;
-    // thread_data                    *thread_sync;
+
 
 
     /* Options handler for starting dameon */
@@ -546,58 +539,48 @@ int main(int argc, char **argv)
     if (ret != 0) {
         handle_error_en(ret, "Failed: to create timestamp thread");
     }
-    printf("### Started timestamp thread: [%d]\n", thread_count);
+    printf("Started timestamp thread: [%d]\n", thread_count);
     e = NULL;
 
     do
     {
-        e = do_accept(socket_fd, &incomming_addr, &mutex);
+        incomming_fd = do_accept(socket_fd, &incomming_addr);
 
         if (sigint || sigterm) {
             running = 0;
             break;
         }
 
-        if (e != NULL) {
-            // Actually insert the node e into the queue at the end
-            TAILQ_INSERT_TAIL(&head, e, nodes);
-            thread_count++;
-
-            ret = pthread_create(&e->t_data.thread_id, NULL, do_process, (void *)e);
-            if (ret != 0) {
-                handle_error_en(ret, "Pthread create\n");
-            }
-            e = NULL;
-            printf("### Started process thread: [%d]\n", thread_count);
-        } else {
-            exit(1);
+        e = malloc(sizeof(struct node));
+        if (e == NULL) {
+            fprintf(stderr, "Failed TAILQ malloc..\n");
+            assert(true);
         }
+        e->t_data.mutex_lock = &mutex;
+        e->t_data.thread_complete_success = false;
+        e->t_data.client_fd = incomming_fd;
+
+        // Actually insert the node e into the queue at the end
+        TAILQ_INSERT_TAIL(&head, e, nodes);
+        thread_count++;
+
+        ret = pthread_create(&e->t_data.thread_id, NULL, do_process, (void *)e);
+        if (ret != 0) {
+            handle_error_en(ret, "Pthread create\n");
+        }
+        e = NULL;
+        printf("### Started process thread: [%d]\n", thread_count);
 
     } while (!(sigint) || !(sigterm));
 
     syslog(LOG_DEBUG, "Caught signal. Exiting\n");
-    fprintf(stderr, "Caught signal. Exiting\n");
-
-    // ret = pthread_join(timestamp, (void **) &ts_ret);
-    // if (ret != 0) {
-    //     handle_error_en(ret, "pthread_join");
-    // }
-
-    // if (((thread_data *)*&ts_ret)->thread_complete_success) {
-    //     fprintf(stderr, "Exit from timestamp thread success\n");
-    // } else {
-    //     fprintf(stderr, "Exit from timestamp thread (No return value)\n");
-    // }
+    printf(RED "Caught signal. Exiting\n" RESET);
 
     // Join the queue
-    TAILQ_FOREACH(e, &head, nodes)
-    {
+    TAILQ_FOREACH(e, &head, nodes) {
         ret = pthread_join(e->t_data.thread_id, NULL);
         if (ret != 0) {
             handle_error_en(ret, "Failed: To join thread\n");
-        }
-        if (e->t_data.thread_complete_success) {
-            fprintf(stderr, "Joining thread success..!\n");
         }
     }
 
@@ -606,19 +589,20 @@ int main(int argc, char **argv)
     {
         e = TAILQ_FIRST(&head);
         TAILQ_REMOVE(&head, e, nodes);
-        thread_count--;
+        thread_remove++;
         free(e);
         e = NULL;
-        printf("### Removed thread from list: [%d]\n", thread_count);
+        printf("Removed thread from list: [%d]\n", thread_remove);
     }
 
-    if (thread_count != 0) {
-        printf("ALL NODES IN THE LIST NOT REMOVED (pending:%d)\n", thread_count);        
+    if (thread_count != thread_remove) {
+        printf("ALL NODES IN THE LIST NOT REMOVED (pending:%d)\n", thread_count);
+        assert(true);    
     }
 
     ret = remove(OUTFILE);
     if (ret != 0) {
-        handle_error_en(ret, "pthread_join");
+        handle_error_en(ret, "Failed: To remove aesdsocketdata file");
     }
     fprintf(stderr, "Removed file successfully\n");
 
@@ -636,7 +620,7 @@ int main(int argc, char **argv)
     syslog(LOG_INFO, "Closing socket\n");
     closelog();
 
-    fprintf(stderr, "aesdsocket program exited gracefully\n");
+    printf(BOLDGREEN "aesdsocket program exited gracefully\n" RESET);
 
     return 0;
 }
