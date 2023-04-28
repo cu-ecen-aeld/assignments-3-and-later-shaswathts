@@ -32,9 +32,7 @@
 #define RED     "\033[31m"      /* Red */
 #define GREEN   "\033[32m"      /* Green */
 #define YELLOW  "\033[33m"      /* Yellow */
-#define BLUE    "\033[34m"      /* Blue */
 
-#define BOLDMAGENTA "\033[1m\033[35m"      /* Bold Magenta */
 #define BOLDGREEN   "\033[1m\033[32m"      /* Bold Green */
 
 typedef struct 
@@ -182,7 +180,7 @@ int write_to_file(char *string)
     size_t      bytes_wrote = 0;
     int         str_len = 0;
 
-    // printf(BLUE "String recived: %s -> writing to file %s\n" RESET, string, OUTFILE);
+    printf("String recived: %s -> writing to file %s\n", string, OUTFILE);
 
     system("mkdir -p /tmp/var");
 
@@ -395,7 +393,7 @@ void *do_timestamp(void *data)
             if (gmtime_r(&t, &date) == NULL) {
                 exit(0);
             }
-            sprintf(timestamp, BOLDMAGENTA "timestamp:%d-%02d-%02d %02d:%02d:%02d\n" RESET, date.tm_year + 1900, date.tm_mon + 1, date.tm_mday, date.tm_hour, date.tm_min, date.tm_sec);
+            sprintf(timestamp, "timestamp:%d-%02d-%02d %02d:%02d:%02d\n", date.tm_year + 1900, date.tm_mon + 1, date.tm_mday, date.tm_hour, date.tm_min, date.tm_sec);
             pthread_mutex_lock(thread_sync->t_data.mutex_lock);
             write_to_file(timestamp);
             pthread_mutex_unlock(thread_sync->t_data.mutex_lock);
