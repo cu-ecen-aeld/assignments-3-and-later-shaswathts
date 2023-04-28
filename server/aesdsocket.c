@@ -375,7 +375,7 @@ void *do_timestamp(void *data)
         /* The only exit way for this thread */
         if (!running) {
             thread_sync->t_data.thread_complete_success = true;
-            pthread_exit(thread_sync);
+            break;
         } else {
             thread_sync->t_data.thread_complete_success = false;
         }
