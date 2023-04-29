@@ -285,7 +285,7 @@ int do_accept(int socfd, struct sockaddr_storage *incomming_addr)
 
     addr_size = sizeof(*incomming_addr);
     incomming_fd = accept(socfd, (struct sockaddr *)incomming_addr, &addr_size);
-    if ((incomming_fd == -1) || (incomming_fd == EINTR)) {
+    if (incomming_fd == -1) {
         incomming_fd = errno;
         printf("Execption occured. (%s)\n", strerror(incomming_fd));
         syslog(LOG_ERR, "Failed: to accept from incomming address (%s)\n", strerror(incomming_fd));

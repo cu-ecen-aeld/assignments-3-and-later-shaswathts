@@ -7,7 +7,7 @@ start() {
 	AESDSOCKET_ARGS="$AESDSOCKET_ARGS -d"
 
 	printf "Starting aesdsocket program: "
-	umask 077
+	# umask 077
 
 	start-stop-daemon -S --exec /usr/bin/aesdsocket -- $AESDSOCKET_ARGS
 	[ $? = 0 ] && echo "OK" || echo "FAIL"
